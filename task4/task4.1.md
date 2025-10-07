@@ -1,0 +1,57 @@
+# 任务四 —— Transformer —— "Attention Is All You Need" 论文精读与实践
+
+***
+
+## 任务一：理论问答
+
++ **1. 在Transformer出现之前，主流的序列模型（如 RNN, LSTM等）存在什么关键的局限性**：主流的序列模型如lstm，gru都采用顺序计算.即由上时间步的隐藏表示 $ h_{t - 1} $ 和当前时间步输入 $ x_t $计算当前时间步的隐藏表示$ h_t $（$h_t = f(h_{t-1}, x_t) $）.这样的计算使得计算不能实现并行。当序列很长时，这种计算效率较低，这是局限性之一。另一个局限性是在顺序计算方式下，我们会为了梯度在反向传播过程中的相对稳定性，选择截断（避免很长的矩阵乘法链）。这使得处在前面的信息在传递过程中可能逐渐“稀释”。即使lstm和gru都设计了相关的机制来解决该问题，但仍然难以完全捕捉长序列依赖的问题。
++ **2. 什么是注意力机制？Transformer架构是如何仅通过注意力机制来解决上述局限性的？**：首先，关于注意力机制：在深度学习中，注意力机制是一种能够动态聚焦于与当前任务最相关信息的计算方法。其核心思想是通过 query、key、value 三个向量来建模信息的重要性：模型通过计算 query 与 key 的相似度来得到一组权重，并据此对对应的 value 进行加权求和，从而突出关键信息、抑制无关信息。更直观地理解，可以将其类比为“根据问题查找最相关的关键词，并根据相关程度来决定答案的权重”。其次，Transformer 架构完全基于注意力机制，摒弃了传统 RNN/LSTM 的顺序递归计算方式。这带来了两方面的突破：
+一是并行化计算的实现：由于不再依赖前后时间步的递归关系，序列中的各位置可以同时计算，大幅提升训练效率；二是全局依赖建模，解决了信息传递的距离依赖问题。
++ **3. 请描述论文中提出的缩放点积注意力（Scaled Dot-Product Attention）的计算全过程。解释Q,K,V分别代表什么？为什么要除以$\sqrt{d_k} $**:
+公式：
+    $ Attention(Q,K,V) = softmax(\frac{QK^\top}{\sqrt{d_k}})V $
+Q、K、V分别代表由query、key、value组成的矩阵。使用$ \sqrt{d_k} $进行放缩的目的是为了防止$ d_k $过大时，进行softmax计算会让一些值趋于1，一些值趋于零。除以 \sqrt{d_k} 可以让数值保持在合适的范围，稳定训练。计算过程的描述如下：
+  1. 将Q与K进行矩阵乘法
+  2. 除以$ \sqrt{d_k} $进行缩放
+  3. 在可选操作mask后进行softmax
+  4. 将softmax计算后得到的权重矩阵与V相乘
++ **4. 什么是多头注意力机制（Multi-Head Attention）？它相比于只使用单个注意力机制有什么优势？论文中是如何将多个头的输出结果合并的？**：多头注意力指通过不同的线性变换（投影矩阵）将输入映射到低维空间，得到多个子空间的 Q、K、V。，最后将结果拼接在一起。相较于单个注意力机制，多头注意力就像是CNN中中间层的多通道一样，能够学习到数据的不同特征，如语法结构，语义，用词等等。这使得细节能够得到更充分的学习而不是以一种“平均模式”的方式来归纳数据的特征。在原论文中，输出结果先通过一次线性变换，再通过concat(按指定维度拼接)合并。
++ **5. 请简要描述位置编码（Positional Encoding）的原理和必要性，并解释为什么选择使用正弦和余弦函数。**：位置编码是由token的位置信息进过三角变化（一般是正弦）映射到向量空间的过程。如果没有位置编码的信息，框架对相同token不同顺序的文本的学习结果是一样的。显然这是不合理的，因为我们知道同样的词语，不同的组合，意思往往大相径庭。选择正弦和余弦函数的原因是不同频率的正弦\余弦函数的值往往是不同的，这保证了位置信息可以被唯一表示。并且由于三角函数的可加性，模型可以通过线性变换推断相对位置关系。同时，通过正弦\余弦计算，可以把位置信息映射到[-1,1]上，能很好的与embedding向量兼容，避免数值过大。
++ **6. 简述Transformer的Encoder和Decoder各自的结构和功能。**：
+encoder由6个相同的层组成。每个层由两个子层——Multi-Head Attention层和Point-wise,fully connected 层组成。每个子层都有类似于resnet中的连接方式，并在进行了LayerNorm。通过embedding并加上Position encoding后,先进入Multi-Head Attention再进入Point-wise,fully connected layer。Encoder最后的输出会作为the memory(即query和key)进入Decoder中。
+Decoder也由6个相同的层组成。Decoder中每个层的子层再结构上比encoder每个层的子层多一个Masked Muti-Head Attetion，用于处理decoder输入，掩盖预测步及未来的信息。这一子层在每个层的最前。第二个子层是一个Multi-Head Attention，其中query,key来自encoder，value来自上一层的输出。最后一层是一个前馈全连接层（Point-wise,fully connected layer）。每一个子层都采用类似于Resnet的连接方式和LayerNorm。
++ **7. Decoder中同时存在多头掩码注意力机制（Masked Multi-Head Attention）和不带掩码的多头注意力机制，它们有什么区别？为什么Decoder需要两种注意力机制？**：相较于不带掩码的多头注意力机制能访问序列的全部，多头掩码注意力机制能够掩盖未来的序列信息使模型只能访问过去的信息，保证生成时只能利用已生成的 token。这样特殊的注意力机制是为了改变注意力机制下的全局可访问性以适应序列的训练方式。在Decoder中，同样存在着多头掩码注意力机制（准确的说是Encoder-Decoder Attention或者Cross-Attention），这是为了使模型能够根据从encoder在整个序列中学习得到的包含全局信息的query和key来预测当前时间步的value。在这里，query和key相当于一种提示信息，即上下文。如果继续使用多头掩码注意力机制，则不能实现该效果。综上，Decoder中需要两种注意力机制。
+
+***
+
+## 任务二：数学推导
+
+条件：
+$ x_1 =  \begin{pmatrix} 1 \\ 0 \\ 1 \\ 0 \end{pmatrix} $ , $x_2 =  \begin{pmatrix} 0 \\ 1 \\ 0 \\ 1 \end{pmatrix}
+$
+
+$ W_Q = \begin{pmatrix} 1 & 0 & 1 \\ 0 & 1 & 0 \\ 1 & 0 & 0 \\ 0 & 0 & 1 \end {pmatrix}, W_K = \begin{pmatrix} 0 & 0 & 1 \\ 1 & 1 & 0 \\ 0 & 1 & 1 \\ 1 & 0 & 0 \end {pmatrix}, W_V = \begin{pmatrix} 0 & 2 & 0 \\ 1 & 0 & 3 \\ 1 & 1 & 0 \\ 0 & 0 & 1 \end {pmatrix}
+$
+
+计算过程：
+
+1. 将输入组合到一起:
+  $ X = \begin{pmatrix}x_1^\top \\ x_2^\top \end{pmatrix} = \begin{pmatrix}1 & 0 & 1 & 0 \\ 0 & 1 & 0 & 1 \end{pmatrix}$
+2. 获得Q,K,V:
+  $Q = XW_Q = \begin{pmatrix}2 & 0 & 1 \\ 0 & 1 & 1 \end{pmatrix}, K = XW_K = \begin{pmatrix}0 & 1 & 2 \\ 2 & 1 & 0 \end{pmatrix}, V = XW_V = \begin{pmatrix}1 & 3 & 0 \\ 1 & 0 & 4 \end{pmatrix} $
+3. 计算$ QK^\top $:
+  $ QK^\top = \begin{pmatrix}2 & 4 \\ 3 & 1  \end{pmatrix}$
+4. 缩放：
+  $ \sqrt{d_k} = \sqrt{3}$
+则：
+  $ \frac{QK^\top}{\sqrt{d_k}} = \frac{1}{\sqrt{3}} \begin{pmatrix}2 & 4 \\ 3 & 1  \end{pmatrix}$
+5. 对每行进行softmax计算:
+  $softmax(\frac{QK^\top}{\sqrt{d_k}}) = \frac{1}{1 + e^{\frac{2}{\sqrt{3}}}}\begin{pmatrix}1 & e^{\frac{2}{\sqrt{3}}} \\ e^{\frac{2}{\sqrt{3}}} & 1  \end{pmatrix}$
+6. 计算输出：
+  $Z = Attention(Q, K, V) = softmax(\frac{QK^\top}{\sqrt{d_k}})V = \frac{1}{1 + e^{\frac{2}{\sqrt{3}}}} \begin{pmatrix}1 + e^{\frac{2}{\sqrt{3}}} & 3 & 4e^{\frac{2}{\sqrt{3}}} \\ 1 + e^{\frac{2}{\sqrt{3}}} & 3e^{\frac{2}{\sqrt{3}}} & 4\end{pmatrix}$
+7. 得到答案：
+  $Z = \begin{pmatrix}z_1^\top \\ z_2^\top \end{pmatrix}, z_1 = \begin{pmatrix} 1 \\ \frac{3}{1 + e^{\frac{2}{\sqrt{3}}}} \\ \frac{4e^{\frac{2}{\sqrt{3}}}}{1 + e^{\frac{2}{\sqrt{3}}}} \end{pmatrix}, z_2 = \begin{pmatrix} 1 \\ \frac{3e^{\frac{2}{\sqrt{3}}}}{1 + e^{\frac{2}{\sqrt{3}}}} \\ \frac{4}{1 + e^{\frac{2}{\sqrt{3}}}} \end{pmatrix}$
+
+说明：
+  这里只展现了计算步骤和答案，没有展现具体计算，如果需要，我可以现场手算演示一下。
+***
